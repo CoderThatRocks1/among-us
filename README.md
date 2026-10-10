@@ -18,6 +18,12 @@ npm run build
 npm run preview
 ```
 
+## Deploy to GitHub Pages
+
+The workflow in `.github/workflows/deploy-pages.yml` runs tests, builds the app, and publishes `dist/` to GitHub Pages on every push to `main`. When built in GitHub Actions, `vite.config.js` sets the base path to `/<repo-name>/`; local development keeps `/`.
+
+In the repository's **Settings → Pages**, set **Build and deployment → Source** to **GitHub Actions**. Branch-based deployment serves the raw source and results in a blank page.
+
 ## Play
 
 - **Play vs bots** starts a local match with one human and four AI crew. Use **WASD** or the arrow keys to move, **E** to use a nearby glowing task station, **R** to report a nearby body, **Space** to call an emergency meeting, and **Q** to sabotage when you are the impostor. The bots follow task routes, one bot is an impostor, simulated incidents can leave bodies to report, and bots cast votes during meetings.

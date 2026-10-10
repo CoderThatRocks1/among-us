@@ -18,6 +18,14 @@ npm run build
 npm run preview
 ```
 
+## Deployment (GitHub Pages)
+
+The site is published to GitHub Pages by the [Deploy to GitHub Pages](.github/workflows/deploy-pages.yml) workflow, which runs on every push to `main`: it installs dependencies, runs `npm test`, builds with `npm run build`, and uploads `dist/` as the Pages artifact.
+
+Because Pages serves the site from a sub-path (`https://<user>.github.io/among-us/`), Vite's `base` is set to `/<repo-name>/` automatically when building inside GitHub Actions (detected via the `GITHUB_ACTIONS` environment variable). Local `npm run dev` and `npm run preview` keep using `/`, so nothing changes for local development.
+
+**One-time repository setting:** the Pages deployment source must be **GitHub Actions**, not a branch. In the repository, go to **Settings → Pages → Build and deployment → Source** and select **GitHub Actions**. Otherwise the deploy step of the workflow fails and the live site is not updated.
+
 ## Play
 
 - **Play vs bots** starts a local match with one human and four AI crew. Use **WASD** or the arrow keys to move, **E** to use a nearby glowing task station, **R** to report a nearby body, **Space** to call an emergency meeting, and **Q** to sabotage when you are the impostor. The bots follow task routes, one bot is an impostor, simulated incidents can leave bodies to report, and bots cast votes during meetings.

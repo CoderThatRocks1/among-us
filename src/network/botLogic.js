@@ -1,62 +1,103 @@
-export const BOT_NAMES = ["Nova", "Orbit", "Pixel", "Comet"];
-export const BOT_COLORS = ["#66d7ce", "#a998f7", "#f27d90", "#a2dc84"];
-const WAYPOINTS = [
-  [205, 158],
-  [405, 161],
-  [735, 161],
-  [817, 298],
-  [735, 475],
-  [490, 481],
-  [240, 470],
-  [127, 315],
-  [474, 304],
-];
-export const TASKS = [
-  { x: 207, y: 156, label: "Align engine", room: "ENGINE" },
-  { x: 746, y: 155, label: "Calibrate scanner", room: "MED BAY" },
-  { x: 815, y: 471, label: "Upload data", room: "COMMS" },
-  { x: 243, y: 475, label: "Fix wiring", room: "ELECTRICAL" },
-  { x: 484, y: 300, label: "Swipe access card", room: "CAFETERIA" },
-];
-export const createBots = () =>
-  BOT_NAMES.map((name, i) => ({
-    id: `bot-${i}`,
-    name,
-    color: BOT_COLORS[i],
-    x: 450 + i * 22,
-    y: 289 + i * 18,
-    target: (i * 2) % WAYPOINTS.length,
-    pause: 0,
-  }));
+const CREW_COLORS = ['#ec6958', '#42b9df', '#b6e36d', '#d39bee', '#f5aa52', '#69d4ba', '#f08ab4']
 
-export function stepBots(bots, dt) {
-  return bots.map((bot) => {
-    let { x, y, target, pause } = bot;
-    if (pause > 0) return { ...bot, pause: Math.max(0, pause - dt) };
-    const [tx, ty] = WAYPOINTS[target];
-    const dx = tx - x,
-      dy = ty - y,
-      distance = Math.hypot(dx, dy);
-    if (distance < 8) {
-      target = (target + 1 + (bot.id.charCodeAt(4) % 3)) % WAYPOINTS.length;
-      pause = 0.6 + Math.random() * 2;
-    } else {
-      const step = Math.min(distance, 65 * dt);
-      x += (dx / distance) * step;
-      y += (dy / distance) * step;
-    }
-    return { ...bot, x, y, target, pause };
-  });
+const ROUTES = [
+  [{ x: 150, y: 165 }, { x: 535, y: 155 }, { x: 535, y: 500 }, { x: 150, y: 505 }],
+  [{ x: 940, y: 155 }, { x: 535, y: 500 }, { x: 150, y: 505 }, { x: 940, y: 500 }],
+  [{ x: 535, y: 500 }, { x: 150, y: 165 }, { x: 940, y: 155 }, { x: 535, y: 155 }],
+  [{ x: 150, y: 505 }, { x: 940, y: 500 }, { x: 535, y: 155 }, { x: 940, y: 155 }],
+]
+
+export function createLocalRoster(playerName = 'Crewmate') {
+  const cleanName = String(playerName || 'Crewmate').trim().slice(0, 18) || 'Crewmate'
+  const players = [{
+    id: 'local-player',
+    name: cleanName,
+    color: '#fb654f',
+    role: 'Crewmate',
+    isHost: true,
+    isBot: false,
+    ready: true,
+  }]
+
+  for (let index = 0; index < 4; index += 1) {
+    const id = `bot-${index + 1}`
+    players.push({
+      id,
+      name: ['Pip', 'Mochi', 'Orbit', 'Pixel'][index],
+      color: CREW_COLORS[(index + 1) % CREW_COLORS.length],
+      role: index === 2 ? 'Impostor' : 'Crewmate',
+      isHost: false,
+      isBot: true,
+      ready: true,
+      botState: 'walking',
+      routeIndex: index % ROUTES.length,
+      waypointIndex: 0,
+      taskTimer: 0,
+    })
+  }
+
+  return players
 }
 
-export function botVotes(participants) {
-  return participants
-    .filter((p) => p.id.startsWith("bot-"))
-    .map((bot) => ({
-      voter: bot.id,
-      target:
-        Math.random() < 0.35
-          ? "skip"
-          : participants[Math.floor(Math.random() * participants.length)].id,
-    }));
+export function updateBots(players, deltaSeconds) {
+  const delta = Math.min(Math.max(deltaSeconds, 0), 0.06)
+  return players.map((player) => {
+    if (!player.isBot || player.alive === false) return player
+
+    let taskTimer = Math.max(0, (player.taskTimer || 0) - delta)
+    let botState = player.botState || 'walking'
+    let waypointIndex = player.waypointIndex || 0
+    let x = player.x
+    let y = player.y
+    const route = ROUTES[player.routeIndex % ROUTES.length]
+
+    if (botState === 'working') {
+      if (taskTimer === 0) {
+        botState = 'walking'
+        waypointIndex = (waypointIndex + 1) % route.length
+      }
+      return { ...player, x, y, botState, taskTimer, waypointIndex }
+    }
+
+    const target = route[waypointIndex % route.length]
+    const dx = target.x - x
+    const dy = target.y - y
+    const distance = Math.hypot(dx, dy)
+
+    if (distance < 13) {
+      botState = 'working'
+      taskTimer = 2.2 + Math.random() * 2.1
+      return { ...player, x: target.x, y: target.y, botState, taskTimer, waypointIndex }
+    }
+
+    const speed = player.role === 'Impostor' ? 66 : 54
+    const step = Math.min(distance, speed * delta)
+    x += (dx / distance) * step
+    y += (dy / distance) * step
+    return { ...player, x, y, botState, taskTimer, waypointIndex }
+  })
+}
+
+export function chooseBotVotes(players, localPlayerId) {
+  const alive = players.filter((player) => player.alive !== false)
+  const votes = {}
+
+  for (const voter of alive.filter((player) => player.isBot)) {
+    const suspects = alive.filter((player) => player.id !== voter.id)
+    if (!suspects.length) continue
+
+    // Crewmates are a little more likely to notice the one impostor; the impostor
+    // tries to blend in by choosing a random crewmate instead.
+    let target
+    if (voter.role === 'Impostor') {
+      target = suspects.filter((player) => player.role !== 'Impostor')
+        .sort(() => Math.random() - 0.5)[0]
+    } else if (Math.random() < 0.56) {
+      target = suspects.find((player) => player.role === 'Impostor')
+    }
+    if (!target) target = suspects[Math.floor(Math.random() * suspects.length)]
+    votes[voter.id] = target.id
+  }
+
+  return votes
 }

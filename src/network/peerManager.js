@@ -1,301 +1,218 @@
-import Peer from "peerjs";
+import Peer from 'peerjs'
 
-const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const PREFIX = "among-stars-";
-const MAX_PLAYERS = 10;
-const MAX_COORD = { x: 960, y: 620 };
-const randomCode = () =>
-  Array.from(
-    crypto.getRandomValues(new Uint8Array(6)),
-    (n) => ALPHABET[n % ALPHABET.length],
-  ).join("");
-const safeName = (value) =>
-  String(value || "Crewmate")
-    .trim()
-    .slice(0, 18) || "Crewmate";
-const clamp = (n, max) =>
-  Math.max(25, Math.min(max - 25, Number.isFinite(n) ? n : 25));
-const spawn = (index) => ({
-  x: 480 + ((index % 3) - 1) * 52,
-  y: 308 + (Math.floor(index / 3) - 1) * 52,
-});
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
-/** One controller per room. The host owns the lobby and coordinate snapshots. */
-export function createHost(name, callbacks = {}) {
-  let peer,
-    code,
-    closed = false,
-    started = false,
-    tick,
-    openTimeout;
-  const connections = new Map();
-  const players = new Map();
-  const localId = "host";
-  const publishLobby = () => {
-    const state = {
-      code,
-      players: [...players.values()].map(({ id, name, color }) => ({
-        id,
-        name,
-        color,
-      })),
-      hostId: localId,
-    };
-    connections.forEach((conn) => {
-      if (conn.open) conn.send({ type: "lobby", state });
-    });
-    callbacks.onLobby?.(state);
-  };
-  const remove = (id) => {
-    connections.delete(id);
-    players.delete(id);
-    if (!closed) publishLobby();
-  };
-  const controller = {
-    get id() {
-      return localId;
-    },
-    get code() {
-      return code;
-    },
-    get players() {
-      return [...players.values()];
-    },
-    start() {
-      if (started || closed || players.size < 2) return false;
-      started = true;
-      const ids = [...players.keys()];
-      const impostor = ids[Math.floor(Math.random() * ids.length)];
-      connections.forEach((conn, id) =>
-        conn.send({
-          type: "start",
-          role: id === impostor ? "impostor" : "crewmate",
-        }),
-      );
-      callbacks.onStart?.(localId === impostor ? "impostor" : "crewmate");
-      tick = window.setInterval(() => {
-        const snapshot = [...players.values()].map(
-          ({ id, name, color, x, y }) => ({ id, name, color, x, y }),
-        );
-        connections.forEach((conn) => {
-          if (conn.open) conn.send({ type: "snapshot", players: snapshot });
-        });
-        callbacks.onSnapshot?.(snapshot);
-      }, 50);
-      return true;
-    },
-    move(x, y) {
-      const player = players.get(localId);
-      if (player && started) {
-        player.x = clamp(x, MAX_COORD.x);
-        player.y = clamp(y, MAX_COORD.y);
-      }
-    },
-    close() {
-      closed = true;
-      window.clearInterval(tick);
-      window.clearTimeout(openTimeout);
-      connections.forEach((conn) => conn.close());
-      connections.clear();
-      peer?.destroy();
-    },
-  };
-  const openPeer = (attempt = 0) =>
-    new Promise((resolve, reject) => {
-      if (closed) return reject(new Error("Room closed"));
-      code = randomCode();
-      peer = new Peer(PREFIX + code);
-      let settled = false;
-      openTimeout = window.setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          peer.destroy();
-          reject(
-            new Error(
-              "Room creation timed out. Check your connection and try again.",
-            ),
-          );
-        }
-      }, 15000);
-      peer.on("open", () => {
-        settled = true;
-        window.clearTimeout(openTimeout);
-        players.set(localId, {
-          id: localId,
-          name: safeName(name),
-          color: "#f8bc5d",
-          ...spawn(0),
-        });
-        publishLobby();
-        resolve(controller);
-      });
-      peer.on("error", (error) => {
-        if (!settled) {
-          settled = true;
-          window.clearTimeout(openTimeout);
-          peer.destroy();
-          if (error.type === "unavailable-id" && attempt < 3)
-            openPeer(attempt + 1).then(resolve, reject);
-          else
-            reject(
-              new Error(
-                error.type === "network" || error.type === "server-error"
-                  ? "Could not reach the PeerJS signaling service. Check your connection."
-                  : error.message,
-              ),
-            );
-        } else callbacks.onError?.(error.message);
-      });
-      peer.on("disconnected", () => {
-        if (!closed)
-          callbacks.onError?.(
-            "Signaling connection lost. Existing peers may remain connected.",
-          );
-      });
-      peer.on("connection", (conn) => {
-        if (closed || started || players.size >= MAX_PLAYERS) {
-          conn.on("open", () => conn.close());
-          return;
-        }
-        let id = null;
-        conn.on("data", (packet) => {
-          if (!packet || typeof packet !== "object") return;
-          if (
-            packet.type === "hello" &&
-            !id &&
-            typeof packet.name === "string" &&
-            players.size < MAX_PLAYERS
-          ) {
-            id = conn.peer;
-            if (players.has(id)) {
-              conn.close();
-              return;
-            }
-            const colors = [
-              "#66d7ce",
-              "#a998f7",
-              "#f27d90",
-              "#a2dc84",
-              "#f3a776",
-              "#88baff",
-              "#e7a6d8",
-              "#d7d889",
-              "#91c5e1",
-            ];
-            players.set(id, {
-              id,
-              name: safeName(packet.name),
-              color: colors[(players.size - 1) % colors.length],
-              ...spawn(players.size),
-            });
-            connections.set(id, conn);
-            publishLobby();
-          } else if (
-            packet.type === "move" &&
-            id &&
-            started &&
-            typeof packet.x === "number" &&
-            typeof packet.y === "number"
-          ) {
-            const player = players.get(id);
-            if (player) {
-              player.x = clamp(packet.x, MAX_COORD.x);
-              player.y = clamp(packet.y, MAX_COORD.y);
-            }
-          }
-        });
-        conn.on("close", () => {
-          if (id) remove(id);
-        });
-        conn.on("error", () => {
-          if (id) remove(id);
-        });
-      });
-    });
-  return openPeer();
+export function normalizeRoomCode(value = '') {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
 }
 
-export function joinHost(roomCode, name, callbacks = {}) {
-  const code = String(roomCode).trim().toUpperCase();
-  if (!new RegExp(`^[${ALPHABET}]{6}$`).test(code))
-    return Promise.reject(new Error("Enter a valid 6-character room code."));
+function makeRoomCode() {
+  return Array.from({ length: 6 }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join('')
+}
+
+function safeName(value) {
+  const name = String(value || 'Crewmate').trim().replace(/[<>]/g, '').slice(0, 18)
+  return name || 'Crewmate'
+}
+
+function waitForPeer(peer, timeout = 16000) {
   return new Promise((resolve, reject) => {
-    const peer = new Peer();
-    let conn,
-      closed = false,
-      settled = false,
-      timeout;
-    const fail = (message) => {
-      if (!settled) {
-        settled = true;
-        window.clearTimeout(timeout);
-        peer.destroy();
-        reject(new Error(message));
-      } else if (!closed) callbacks.onError?.(message);
-    };
-    const controller = {
-      get id() {
-        return peer.id;
+    let settled = false
+    const cleanup = () => {
+      clearTimeout(timer)
+      peer.off('open', onOpen)
+      peer.off('error', onError)
+    }
+    const finish = (callback, value) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      callback(value)
+    }
+    const onOpen = (id) => finish(resolve, id)
+    const onError = (error) => finish(reject, error)
+    const timer = setTimeout(() => {
+      finish(reject, new Error('The PeerJS signalling service did not respond in time.'))
+    }, timeout)
+    peer.on('open', onOpen)
+    peer.on('error', onError)
+  })
+}
+
+function waitForConnection(connection, timeout = 18000) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const cleanup = () => {
+      clearTimeout(timer)
+      connection.off('open', onOpen)
+      connection.off('error', onError)
+    }
+    const finish = (callback, value) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      callback(value)
+    }
+    const onOpen = () => finish(resolve, connection)
+    const onError = (error) => finish(reject, error)
+    const timer = setTimeout(() => {
+      finish(reject, new Error('The room did not answer. Check the code and try again.'))
+    }, timeout)
+    connection.on('open', onOpen)
+    connection.on('error', onError)
+  })
+}
+
+function unavailableId(error) {
+  return error?.type === 'unavailable-id' || /unavailable|already taken/i.test(error?.message || '')
+}
+
+function peerErrorMessage(error) {
+  if (error?.type === 'peer-unavailable') return 'We could not find that room. Double-check the six-character code.'
+  if (error?.type === 'network' || error?.type === 'server-error') return 'PeerJS could not reach its signalling service. Check your connection and try again.'
+  if (error?.type === 'unavailable-id') return 'That room code is already in use. Please try again.'
+  return error?.message || 'The connection could not be created. Please try again.'
+}
+
+export async function createHost({ onPacket = () => {}, onStatus = () => {} } = {}) {
+  let peer
+  let roomCode
+  let lastError
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    roomCode = makeRoomCode()
+    peer = new Peer(roomCode, { debug: 0 })
+    try {
+      roomCode = await waitForPeer(peer)
+      break
+    } catch (error) {
+      lastError = error
+      peer.destroy()
+      if (!unavailableId(error) || attempt === 4) {
+        throw new Error(peerErrorMessage(error))
+      }
+      peer = null
+    }
+  }
+
+  if (!peer) throw new Error(peerErrorMessage(lastError))
+
+  const connections = new Map()
+  let closed = false
+
+  peer.on('connection', (connection) => {
+    const peerId = connection.peer
+    connections.set(peerId, connection)
+    let welcomed = false
+
+    connection.on('data', (packet) => {
+      if (!packet || typeof packet !== 'object') return
+      if (!welcomed && packet.type === 'hello') {
+        welcomed = true
+        onPacket({
+          type: 'player-joined',
+          player: { id: peerId, name: safeName(packet.name), ready: false, isHost: false },
+        }, peerId)
+        return
+      }
+      onPacket(packet, peerId)
+    })
+
+    connection.on('close', () => {
+      connections.delete(peerId)
+      if (welcomed) onPacket({ type: 'player-left', id: peerId }, peerId)
+    })
+
+    connection.on('error', (error) => {
+      onStatus({ type: 'connection-error', message: peerErrorMessage(error) })
+    })
+  })
+
+  peer.on('disconnected', () => {
+    if (!closed) onStatus({ type: 'disconnected', message: 'Lost the room connection. Rejoin to keep playing.' })
+  })
+
+  peer.on('error', (error) => {
+    onStatus({ type: 'error', message: peerErrorMessage(error) })
+  })
+
+  return {
+    role: 'host',
+    selfId: roomCode,
+    roomCode,
+    send(peerId, packet) {
+      const connection = connections.get(peerId)
+      if (connection?.open) connection.send(packet)
+    },
+    broadcast(packet, exceptPeerId) {
+      for (const [peerId, connection] of connections) {
+        if (peerId !== exceptPeerId && connection.open) connection.send(packet)
+      }
+    },
+    disconnect(peerId) {
+      const connection = connections.get(peerId)
+      if (!connection) return
+      connections.delete(peerId)
+      connection.close()
+    },
+    close() {
+      if (closed) return
+      closed = true
+      for (const connection of connections.values()) connection.close()
+      connections.clear()
+      peer.destroy()
+    },
+  }
+}
+
+export async function joinRoom(roomCodeValue, { name, onPacket = () => {}, onStatus = () => {} } = {}) {
+  const roomCode = normalizeRoomCode(roomCodeValue)
+  if (roomCode.length !== 6) throw new Error('Room codes are six characters long.')
+
+  const peer = new Peer(undefined, { debug: 0 })
+  let connection
+  let handshakePeerError
+  try {
+    const selfId = await waitForPeer(peer)
+    const peerFailure = new Promise((_, reject) => {
+      handshakePeerError = (error) => reject(error)
+      peer.on('error', handshakePeerError)
+    })
+    connection = peer.connect(roomCode, { reliable: true, serialization: 'json' })
+    connection.on('data', (packet) => {
+      if (packet && typeof packet === 'object') onPacket(packet, roomCode)
+    })
+    connection.on('close', () => onStatus({ type: 'disconnected', message: 'The host closed the room.' }))
+    connection.on('error', (error) => onStatus({ type: 'connection-error', message: peerErrorMessage(error) }))
+    await Promise.race([waitForConnection(connection), peerFailure])
+    peer.off('error', handshakePeerError)
+    connection.send({ type: 'hello', name: safeName(name) })
+
+    peer.on('disconnected', () => onStatus({ type: 'disconnected', message: 'Lost the room connection. Rejoin to keep playing.' }))
+    peer.on('error', (error) => onStatus({ type: 'error', message: peerErrorMessage(error) }))
+
+    let closed = false
+    return {
+      role: 'guest',
+      selfId,
+      roomCode,
+      send(packet) {
+        if (connection?.open) connection.send(packet)
       },
-      get code() {
-        return code;
-      },
-      start() {
-        return false;
-      },
-      move(x, y) {
-        if (conn?.open)
-          conn.send({
-            type: "move",
-            x: clamp(x, MAX_COORD.x),
-            y: clamp(y, MAX_COORD.y),
-          });
+      broadcast(packet) {
+        if (connection?.open) connection.send(packet)
       },
       close() {
-        closed = true;
-        window.clearTimeout(timeout);
-        conn?.close();
-        peer.destroy();
+        if (closed) return
+        closed = true
+        connection?.close()
+        peer.destroy()
       },
-    };
-    timeout = window.setTimeout(
-      () => fail("Connection timed out. Check the room code and try again."),
-      15000,
-    );
-    peer.on("open", () => {
-      conn = peer.connect(PREFIX + code, { reliable: true });
-      conn.on("open", () => {
-        conn.send({ type: "hello", name: safeName(name) });
-      });
-      conn.on("data", (packet) => {
-        if (!packet || typeof packet !== "object") return;
-        if (
-          packet.type === "lobby" &&
-          packet.state?.players &&
-          Array.isArray(packet.state.players)
-        ) {
-          callbacks.onLobby?.(packet.state);
-          if (!settled) {
-            settled = true;
-            window.clearTimeout(timeout);
-            resolve(controller);
-          }
-        } else if (packet.type === "start")
-          callbacks.onStart?.(
-            packet.role === "impostor" ? "impostor" : "crewmate",
-          );
-        else if (packet.type === "snapshot" && Array.isArray(packet.players))
-          callbacks.onSnapshot?.(packet.players);
-      });
-      conn.on("close", () => fail("The host closed the room."));
-      conn.on("error", () => fail("Could not connect to this room."));
-    });
-    peer.on("error", (error) =>
-      fail(
-        error.type === "peer-unavailable"
-          ? "Room not found. Check the code and make sure the host is online."
-          : error.message,
-      ),
-    );
-  });
+    }
+  } catch (error) {
+    if (handshakePeerError) peer.off('error', handshakePeerError)
+    connection?.close()
+    peer.destroy()
+    throw new Error(peerErrorMessage(error))
+  }
 }

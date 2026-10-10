@@ -1,133 +1,72 @@
-import { useState } from "react";
-import { Astronaut, Icon } from "./Icons";
+import { useState } from 'react'
+import { ArrowLeft, Check, Clipboard, Copy, Crown, Gamepad2, LoaderCircle, Radio, Shield, Signal, Sparkles, UserRound, Users, Wifi } from 'lucide-react'
 
-export default function Lobby({ state, isHost, onStart, onLeave, error }) {
-  const [copied, setCopied] = useState(false);
-  const players = state?.players || [];
-  const code = state?.code || "------";
-  const copy = async () => {
+function PlayerMark({ color, small = false }) {
+  return <span className={`player-mark ${small ? 'player-mark-small' : ''}`} style={{ '--player-color': color || '#79c6da' }}><span className="player-mark-glass" /></span>
+}
+
+export default function Lobby({ code, players, myId, isHost, status, onStart, onLeave, onReady }) {
+  const [copied, setCopied] = useState(false)
+  const localPlayer = players.find((player) => player.id === myId)
+  const readyCount = players.filter((player) => player.ready || player.isHost).length
+
+  async function copyCode() {
     try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2200);
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1800)
     } catch {
-      setCopied(false);
+      setCopied(false)
     }
-  };
+  }
+
   return (
-    <main className="lobby-wrap page-enter">
-      <div className="lobby-top">
-        <button className="text-back" onClick={onLeave}>
-          <Icon name="back" size={18} /> LEAVE ROOM
-        </button>
-        <span className="edition">
-          BROWSER EDITION <span>✳</span>
-        </span>
-      </div>
-      <div className="lobby-heading">
-        <div className="section-index">
-          02 <span>—</span> PRE-FLIGHT CHECK
+    <main className="lobby-shell">
+      <div className="space-grid" aria-hidden="true" />
+      <header className="lobby-header">
+        <button className="back-link" onClick={onLeave}><ArrowLeft size={16} /> BACK TO MENU</button>
+        <div className="brand-lockup"><span className="brand-mark"><span /><span /><span /></span><span className="brand-name">ORBITAL<span> / </span>SUSPECTS</span></div>
+        <div className="lobby-online"><span className="live-pulse" /> ROOM ONLINE</div>
+      </header>
+
+      <section className="lobby-content">
+        <div className="lobby-title-block"><div className="eyebrow"><span className="eyebrow-line" /> PRE-FLIGHT CHECK</div><h1>Assemble<br /><span>your crew.</span></h1><p>Send your code to the crew. The launch happens when you say so.</p></div>
+
+        <div className="lobby-board">
+          <div className="lobby-main-panel">
+            <div className="lobby-panel-top"><div><span className="panel-overline"><Radio size={13} /> PRIVATE ROOM</span><h2>Waiting for crew<span>.</span></h2></div><span className="capacity-chip"><Users size={14} /> {players.length}<i>/</i>8</span></div>
+
+            <div className="player-list">
+              {Array.from({ length: Math.max(players.length, 4) }, (_, index) => {
+                const player = players[index]
+                return player ? (
+                  <div className={`lobby-player ${player.id === myId ? 'lobby-player-you' : ''}`} key={player.id}>
+                    <PlayerMark color={player.color} />
+                    <div className="lobby-player-name"><b>{player.name}{player.id === myId ? <span className="you-tag">YOU</span> : null}</b><small>{player.isHost ? 'ROOM HOST' : player.ready ? 'READY TO LAUNCH' : 'CHECKING IN'}</small></div>
+                    <div className={`player-status ${player.isHost || player.ready ? 'player-ready' : ''}`}>{player.isHost ? <><Crown size={13} /> HOST</> : player.ready ? <><Check size={13} /> READY</> : <><LoaderCircle size={13} /> WAITING</>}</div>
+                  </div>
+                ) : (
+                  <div className="lobby-player lobby-empty" key={`empty-${index}`}><span className="empty-avatar"><UserRound size={16} /></span><div className="lobby-player-name"><b>Waiting for crew</b><small>SHARE YOUR ROOM CODE</small></div><span className="empty-dots"><i /><i /><i /></span></div>
+                )
+              })}
+            </div>
+
+            <div className="lobby-actions">
+              {isHost ? <button className="launch-button" onClick={onStart} disabled={!players.length}><Gamepad2 size={18} /><span>START THE MISSION</span><span className="launch-arrow">→</span></button> : <button className={`ready-button ${localPlayer?.ready ? 'is-ready' : ''}`} onClick={() => onReady(!localPlayer?.ready)}><Check size={17} /><span>{localPlayer?.ready ? 'YOU’RE READY' : 'MARK ME READY'}</span></button>}
+              <div className="launch-caption"><span className="live-pulse" /> {isHost ? `${readyCount} CREW ${readyCount === 1 ? 'MEMBER' : 'MEMBERS'} READY` : 'THE HOST WILL START THE MISSION'}</div>
+            </div>
+          </div>
+
+          <aside className="lobby-side-panel">
+            <div className="room-code-card"><div className="room-code-head"><span className="panel-overline"><Shield size={13} /> YOUR ROOM CODE</span><span className="secure-mark"><Signal size={13} /> P2P</span></div><div className="room-code-display">{code.split('').map((character, index) => <span key={`${character}-${index}`}>{character}</span>)}</div><button className="copy-code-button" onClick={copyCode}>{copied ? <Check size={15} /> : <Clipboard size={15} />}{copied ? 'COPIED TO CLIPBOARD' : 'COPY INVITE CODE'}</button><div className="invite-note"><Sparkles size={13} /> Your friends can join from anywhere.</div></div>
+            <div className="connection-card"><div className="connection-orbit"><span /><i /><b /></div><div className="connection-copy"><span className="panel-overline">DIRECT CONNECTION</span><b>Peer to peer.<br />No game server.</b><p>Your browser is hosting this room. Game data travels directly between players.</p></div><div className="connection-footer"><Wifi size={14} /> ENCRYPTED WEBRTC LINK <span className="connection-dots"><i /><i /><i /></span></div></div>
+            {status && <div className="lobby-status" role="status"><Signal size={14} />{status}</div>}
+            <div className="lobby-privacy"><Shield size={14} /> THE ROOM CLOSES WHEN THE HOST LEAVES</div>
+          </aside>
         </div>
-        <h1>
-          THE <span>LOBBY.</span>
-        </h1>
-        <p>
-          {isHost
-            ? "Invite your crew. The mission begins when you say so."
-            : "You’re in. Waiting for the captain to start the mission."}
-        </p>
-      </div>
-      <div className="lobby-grid">
-        <section className="lobby-card code-card">
-          <div className="card-top">
-            <span className="card-kicker">
-              <Icon name="wifi" size={16} /> PRIVATE ROOM
-            </span>
-            <span className="status-pill">
-              <span className="live-dot" /> LIVE
-            </span>
-          </div>
-          <p className="card-label">YOUR ROOM CODE</p>
-          <div className="room-code" aria-label={`Room code ${code}`}>
-            {code.split("").map((char, i) => (
-              <span key={i}>{char}</span>
-            ))}
-          </div>
-          <button className="copy-button" onClick={copy}>
-            <Icon name={copied ? "check" : "copy"} size={18} />
-            {copied ? "Copied to clipboard" : "Copy invite code"}
-          </button>
-          <div className="code-footnote">
-            <Icon name="lock" size={15} /> Only people with this code can join
-          </div>
-        </section>
-        <section className="lobby-card crew-card">
-          <div className="card-top">
-            <span className="card-kicker">
-              <Icon name="users" size={17} /> YOUR CREW
-            </span>
-            <span className="player-count">{players.length} / 10 PLAYERS</span>
-          </div>
-          <div className="crew-list">
-            {players.map((player, i) => (
-              <div className="crew-row" key={player.id}>
-                <div
-                  className="crew-avatar"
-                  style={{ background: player.color + "25" }}
-                >
-                  <Astronaut size={37} color={player.color} />
-                </div>
-                <span className="crew-name">
-                  {player.name}
-                  <small>{i === 0 ? "CAPTAIN" : "CREWMATE"}</small>
-                </span>
-                <span className="crew-ready">
-                  <span className="live-dot" /> READY
-                </span>
-              </div>
-            ))}
-            {players.length < 10 && (
-              <div className="crew-empty">
-                <Icon name="plus" size={17} /> Waiting for more crewmates...
-              </div>
-            )}
-          </div>
-        </section>
-      </div>
-      {error && (
-        <div role="alert" className="error-banner lobby-error">
-          <Icon name="alert" size={17} />
-          {error}
-        </div>
-      )}
-      <div className="lobby-actions">
-        <div className="lobby-tip">
-          <span className="tip-icon">✳</span>
-          <span>
-            {isHost
-              ? "Your browser is the host. Keep this tab open while playing."
-              : "Keep this tab open. The host will start when everyone is ready."}
-          </span>
-        </div>
-        {isHost ? (
-          <button
-            className="primary-button"
-            onClick={onStart}
-            disabled={players.length < 2}
-          >
-            START GAME <Icon name="arrow" size={20} />
-          </button>
-        ) : (
-          <div className="waiting-badge">
-            <span className="spinner" /> WAITING FOR HOST
-          </div>
-        )}
-      </div>
-      {isHost && players.length < 2 && (
-        <p className="lobby-hint">
-          At least 2 players are needed to start. Share your code!
-        </p>
-      )}
+      </section>
+
+      <footer className="site-footer"><span>© 2026 ORBITAL SUSPECTS</span><span><i /> WAITING FOR CLEARANCE</span><span className="footer-right">ROOM {code} <Copy size={12} /></span></footer>
     </main>
-  );
+  )
 }
